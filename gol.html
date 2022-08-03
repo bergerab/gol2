@@ -1,0 +1,363 @@
+<!doctype html>
+<html>
+
+<body>
+  <canvas id="screen"></canvas>
+  <div class="options">
+    <h3 style="margin:0;padding:0;">Options</h3>
+    <span>
+      Choose game
+      <select id="game">
+        <option>acorn</option>
+        <option>blinker</option>
+        <option>beacon</option>
+        <option>glider</option>
+        <option>rpentomino</option>
+      </select>
+      <button onclick="reset(); loadSelectedGame();">Load</button>
+    </span>
+    <div>
+      Options
+      <button onclick="reset();">Clear</button>
+    </div>
+    <div>
+      Graphic Variants
+      <select id="variant">
+        <option>square-outline</option>
+        <option>square-fill</option>
+        <option>circle-outline</option>
+        <option>circle-fill</option>
+      </select>
+    </div>
+    <div>
+      <span>Modes:</span>
+      <input id="pan" type="radio" name="mode">
+      <label for="pan">Pan</label>
+      <input id="pencil" type="radio" name="mode">
+      <label for="pencil">Pencil</label>
+    </div>
+    <div>
+      <span>Color:</span>
+      <select id="color">
+        <option>random</option>
+        <option>white</option>
+        <option>purple</option>
+        <option>blue</option>
+        <option value="#49fb35">green</option>
+        <option>hotpink</option>
+      </select>
+    </div>
+    <div>
+      <span>Actions:</span>
+      <input id="running" type="checkbox">Start/Stop</input>
+    </div>
+    <div>
+      <span>Generation: #<span id="generation">0</span></span>
+    </div>
+    <div>
+      <span alt="How many cells are being tracked/updated">Managed Cells: <span id="managed-cells">0</span></span>
+    </div>
+  </div>
+  <style>
+    html,
+    body {
+      height: 100%;
+      margin: 0;
+    }
+
+    body {
+      color: white;
+      background: black;
+      overflow: hidden;
+    }
+
+    .options {
+      color: white;
+      position: absolute;
+      background: #00000099;
+      left: 0;
+      bottom: 0;
+      font-family: 'Courier New', Courier, monospace;
+      border: 1px solid white;
+      padding: 5px 20px;
+      margin: 10px;
+    }
+  </style>
+  <script>
+    let cells = {};
+    let scale, translate;
+    const canvas = document.getElementById('screen');
+    const ctx = canvas.getContext('2d');
+    ctx.imageSmoothingEnabled = false;
+    const setTransformation = () => {
+      ctx.resetTransform();
+      ctx.translate(...translate);
+      ctx.scale(...scale.map(Math.round));
+    };
+    const setCanvasSize = () => {
+      canvas.height = document.body.clientHeight;
+      canvas.width = document.body.clientWidth;
+      translate = [canvas.width / 2, canvas.height / 2];
+      scale = [30, 30];
+      setTransformation();
+    };
+    let pencilMode = false;
+    let generation = 0;
+    const loadGame = (xs, gens = 0) => {
+      xs.forEach(x => makeCell(x, true));
+    }
+    const sum = arr => arr.reduce((a, b) => a + b, 0);
+    const makeCell = (position, value = false, nextValue = false, generationsSinceDeath = 0, color=genRandomColor()) =>
+      cells[position] = { position, value, nextValue, generationsSinceDeath, color };
+    const getCell = position => cells[position] || null;
+    const addPositions = ([x0, y0], [x1, y1]) => [x0 + x1, y0 + y1];
+    const subPositions = ([x0, y0], [x1, y1]) => [x0 - x1, y0 - y1];
+    const isPositionAlive =
+      position => getCell(position) && getCell(position).value;
+    const getAdjancentPositions = position =>
+      [[-1, -1], [-1, 0], [-1, 1], [0, 1], [0, -1], [1, 1], [1, 0], [1, -1]]
+        .map(offset => addPositions(offset, position));
+    const getAliveNeighborCount = position =>
+      sum(getAdjancentPositions(position).map(isPositionAlive));
+    const getNextGenerationValue = (isAlive, position) => {
+      // Any live cell with two or three live neighbours survives.
+      // Any dead cell with three live neighbours becomes a live cell.
+      // All other live cells die in the next generation. Similarly, all other dead cells stay dead.
+      const aliveNeighborCount = getAliveNeighborCount(position);
+      return isAlive && (aliveNeighborCount === 2 || aliveNeighborCount === 3) ||
+        !isAlive && aliveNeighborCount === 3;
+    };
+
+    const managedCellsInput = document.getElementById('managed-cells');
+    const runGeneration = () => {
+      // update nextValue for every alive cell or dead cell that could come alive
+      for (const cell of Object.values(cells)) {
+        cell.nextValue = getNextGenerationValue(cell.value, cell.position);
+        // only need to check cells that don't already exist
+        getAdjancentPositions(cell.position)
+          .filter(x => getCell(x) === null)
+          .forEach(position => {
+            if (getNextGenerationValue(false, position))
+              makeCell(position, false, true)
+          });
+      }
+
+      // update value (this step could be optimized out)
+      for (const cell of Object.values(cells)) {
+        if (!cell.nextValue && !cell.value) ++cell.generationsSinceDeath;
+        else cell.generationsSinceDeath = 0;
+
+        // clean up cells that have been dead for a long time
+        if (cell.generationsSinceDeath > 200) {
+          delete cells[cell.position];
+        } else {
+          cell.value = cell.nextValue;
+        }
+      }
+
+      managedCellsInput.innerText = Object.keys(cells).length;
+
+      ++generation;
+    };
+
+    const reset = () => {
+      generation = 0;
+      runningInput.checked = false;
+      stop = true;
+      cells = {};
+      render();
+    };
+
+    const clearScreen = () => {
+      ctx.save();
+      ctx.resetTransform();
+      ctx.rect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = 'black';
+      ctx.fill();
+      ctx.restore();
+    };
+
+    let variantInput = document.getElementById('variant');
+    variantInput.onchange = () => render();
+    let colorInput = document.getElementById('color');
+    colorInput.onchange = () => render();
+    const easeInOutCubic = x => x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2;
+    const render = () => {
+      clearScreen();
+      ctx.fillStyle = ctx.strokeStyle = colorInput.value;
+      ctx.lineWidth = 0.1;
+
+      for (const cell of Object.values(cells)) {
+        if (colorInput.value === 'random') {
+          ctx.fillStyle = ctx.strokeStyle = cell.color;
+        } 
+        if (cell.value) ctx.globalAlpha = 1;
+        // 40 maps to how much to dim just for this cell being dead
+        // /20 extends the life of the decay
+        else ctx.globalAlpha = easeInOutCubic(1 / ((cell.generationsSinceDeath + 120) / 50));
+
+        ctx.beginPath();
+        if (variantInput.value === 'square-fill') {
+          ctx.rect(cell.position[0], cell.position[1], 1, 1);
+          ctx.fill();
+        } else if (variantInput.value === 'square-outline') {
+          ctx.rect(cell.position[0], cell.position[1], 1, 1);
+          ctx.stroke();
+        } else if (variantInput.value === 'circle-fill') {
+          ctx.arc(cell.position[0] + 0.5, cell.position[1] + 0.5, 0.5, 0, 2 * Math.PI, false);
+          ctx.fill();
+        } else if (variantInput.value === 'circle-outline') {
+          ctx.arc(cell.position[0] + 0.5, cell.position[1] + 0.5, 0.5, 0, 2 * Math.PI, false);
+          ctx.stroke();
+        }
+        ctx.closePath();
+      }
+      ctx.globalAlpha = 1;
+
+      ctx.save();
+      ctx.resetTransform();
+        ctx.beginPath();
+        ctx.moveTo(10, 0);
+        ctx.lineTo(10, canvas.height);
+        ctx.stroke();
+        ctx.closePath();
+      ctx.restore();
+      //for (let x=translate; x < canvas.width / scale[0]; ++x) {
+      //  ctx.beginPath();
+      //  ctx.moveTo(x, 0);
+      //  ctx.lineTo(x, canvas.height / scale[1]);
+      //  ctx.stroke();
+      //  ctx.closePath();
+      //}
+    };
+
+    const generationOutput = document.getElementById('generation');
+    let stop = false;
+    const run = now => {
+      if (stop) { stop = false; return; }
+      runGeneration();
+      generationOutput.innerText = generation || '0';
+      render();
+      requestAnimationFrame(run);
+    };
+
+    // scroll to scale
+    canvas.onmousewheel = e => {
+      const amount = e.deltaY < 0 ? 1.1 : 0.9;
+      scale = [scale[0] * amount, scale[1] * amount];
+      setTransformation();
+      render();
+    };
+
+    const transform = v => {
+      v = [v[0] - translate[0], v[1] - translate[1]];
+      v = [v[0] / scale[0], v[1] / scale[1]];
+      v = [Math.floor(v[0]), Math.floor(v[1])];
+      return v;
+    }
+
+    const handleClickPencilMode = (x, y) => {
+      let v = [x, y];
+      v = transform(v);
+      if (getCell(v)) getCell(v).value = true;
+      else makeCell(v, true);
+      render();
+    };
+
+    // drag to pan
+    let dragStart = null;
+    canvas.onmousedown = e => {
+      const { x, y } = e;
+      dragStart = [x, y];
+      if (pencilMode) {
+        handleClickPencilMode(x, y);
+      } else {
+        canvas.style.cursor = 'grabbing';
+      }
+    };
+    canvas.onmouseup = e => {
+      dragStart = null;
+      if (!pencilMode) {
+        canvas.style.cursor = 'grab';
+      }
+    };
+    canvas.onmouseleave = e => {
+      dragStart = null;
+      if (!pencilMode) {
+        canvas.style.cursor = 'grab';
+      }
+    };
+    canvas.onmousemove = e => {
+      if (dragStart) {
+        const { x, y } = e;
+        if (pencilMode) {
+          handleClickPencilMode(x, y);
+        } else {
+          const position = [x, y];
+          const delta = subPositions(dragStart, position);
+          dragStart = position;
+          translate = addPositions(translate, [-delta[0], -delta[1]]);
+          setTransformation();
+          render();
+        }
+      }
+    };
+
+    // track canvas size with document size
+    document.body.onresize = () => {
+      setCanvasSize();
+      render();
+    }
+    setCanvasSize();
+
+    const runningInput = document.getElementById('running');
+    runningInput.onchange = () => {
+      if (!runningInput.checked) stop = true;
+      else { stop = false; run(); }
+    };
+
+      const genRandomColor = () => {
+        const r = Math.ceil(Math.random() * 156) + 100,
+          g = Math.ceil(Math.random() * 156) + 100,
+          b = Math.ceil(Math.random() * 156) + 100;
+        return '#' + r.toString(16) + g.toString(16) + b.toString(16);
+      };
+
+    const pencilInput = document.getElementById('pencil');
+    const handleMode = () => {
+      pencilMode = pencilInput.checked;
+      if (!pencilMode) canvas.style.cursor = 'grab';
+      else canvas.style.cursor = 'pointer';
+    };
+    pencilInput.onchange = handleMode;
+    const panInput = document.getElementById('pan');
+    panInput.onchange = handleMode;
+    handleMode();
+
+    const toggleCb = cb => (cb.checked = !cb.checked, cb.onchange());
+    const keyMap = {
+      's': () => toggleCb(runningInput),
+      '1': () => (panInput.checked = true, handleMode()),
+      '2': () => (pencilInput.checked = true, handleMode()),
+      'd': () => (console.log(JSON.stringify(Object.values(cells).filter(x => x.value).map(x => x.position)))),
+    };
+    onkeyup = e => { if (keyMap[e.key]) keyMap[e.key](); };
+
+    const games = {
+      blinker: [[-1, 0], [0, 0], [1, 0]],
+      beacon: [[-1,-2],[-2,-2],[-2,-1],[0,1],[1,1],[1,0]],
+      glider: [[2,-2],[2,-1],[2,0],[1,0],[0,-1]],
+      acorn: [[-2,1],[-1,1],[-1,-1],[1,0],[2,1],[3,1],[4,1]],
+      rpentomino: [[-2,0],[-1,0],[-1,1],[-1,-1],[0,-1]],
+    };
+
+    const gameInput = document.getElementById('game');
+    const loadSelectedGame = () => {
+      loadGame(games[gameInput.value]);
+      render();
+    };
+    loadSelectedGame();
+  </script>
+</body>
+
+</html>
